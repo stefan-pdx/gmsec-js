@@ -1,5 +1,6 @@
 #include <iostream>
 #include <map>
+#include <string.h>
 
 #include "v8.h"
 #include "node.h"
@@ -31,8 +32,18 @@ class Connection: ObjectWrap{
 private:
 
 public:
+	class GenericPublishCallback : public gmsec::Callback{
+	public:
+		Persistent<Function> cb;
+		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
+				//const char *tmp;
+				//msg->ToXML(tmp);
+				cout << "WOHOO!" << endl;
+			};
+	};
+
 	gmsec::Connection *gmsecConnection;
-	map<char, Callback> subscribeCallbacks;
+	map<const char*, GenericPublishCallback*> subscribeCallbacks;
 
 	static Persistent<FunctionTemplate> s_ct;
 
@@ -64,33 +75,24 @@ public:
 	    return args.This();
 	}
 
-	class GenericPublishCallback : public Callback
-	{
-	public:
-		Persistent<Function> cb;
-		virtual void CALL_TYPE OnMessage(Connection *conn, Message *msg){
-
-			}
-	};
-
 	struct message_baton_t {
 		Connection *connection;
-		String subject;
-		GenericPublishCallback gmsecCb;
+		char *subject;
+		GenericPublishCallback *gmsecCb;
 		Persistent<Function> cb;
 	};
 
 	struct connection_baton_t {
 		Connection *connection;
 		Persistent<Function> cb;
-
 	  };
 
 	static Handle<Value> Subscribe(const Arguments& args){
 		HandleScope scope;
 
-		REQ_STR_ARG(0, subscribeStr);
-		REQ_FUN_ARG(1, cb);
+		REQ_STR_ARG(0, subscribeV8Str);
+		REQ_FUN_ARG(1, subscribeCb);
+		REQ_FUN_ARG(2, immediateCb);
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
@@ -98,13 +100,23 @@ public:
 		// to our collection so that we can track the various callback instances.
 		// Note that we're going to refer to these when we Unsubscribe so that
 		// we can properly delete the instances of GenericPublichBallback.
-		GenericPublishCallback gmsecCb = new GenericPublishCallback();
-		gmsecCb.cb = cb;
-		connection->subscribeCallbacks[*(String::AsciiValue(subscribeStr))] = gmsecCb;
+		GenericPublishCallback *gmsecCb = new GenericPublishCallback();
+		gmsecCb->cb = Persistent<Function>::New(subscribeCb);
 
+		char *subscribeStr = new char[512];
+		strcpy(subscribeStr, *String::AsciiValue(subscribeV8Str));
+
+		// Log this subscription with the given callback.
+		connection->subscribeCallbacks.insert( make_pair(subscribeStr, gmsecCb) );
+
+		// Populate a baton to pass it to the eio library.
 		message_baton_t *baton = new message_baton_t();
 		baton->connection = connection;
-		baton->subject = *(String::AsciiValue(subscribeStr));
+		baton->subject = subscribeStr;
+		baton->gmsecCb = gmsecCb;
+		baton->cb = Persistent<Function>::New(immediateCb);
+
+		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
 
 		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
 
@@ -117,36 +129,47 @@ public:
 		gmsec::Status result;
 
 		message_baton_t *baton = static_cast<message_baton_t*>(req->data);
+		//baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
 
-		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
+		return 0;
 	}
 
 	static int EIO_AfterSubscribe(eio_req *req){
 		HandleScope scope;
 
-		connection_baton_t *baton = static_cast<connection_baton_t *>(req->data);
+		message_baton_t *baton = static_cast<message_baton_t *>(req->data);
 
 		ev_unref(EV_DEFAULT_UC);
 
 		baton->connection->Unref();
 
-		Local<Value> argv[1];
-
-		argv[0] = String::New("Hello World");
+		Local<Value> argv[0];
 
 		TryCatch try_catch;
 
-		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+		baton->cb->Call(Context::GetCurrent()->Global(), 0, argv);
 
 		if (try_catch.HasCaught()) {
 		      FatalException(try_catch);
 		}
 
+		// Note that we are only disposing the immediate callback and not the
+		// instance of the GenericPublishCallback which will remain active as
+		// new messages are received. That corresponding callback should be
+		// disposed properly with the Unscubscribe callback.
 		baton->cb.Dispose();
 
 		delete baton;
 
 		return 0;
+	}
+
+	static int EIO_GMSEC_Subscribe(eio_req *req){
+
+	}
+
+	static int EIO_GMSEC_AfterSubscribe(eio_req *req){
+
 	}
 
 	static Handle<Value> Connect(const Arguments& args){

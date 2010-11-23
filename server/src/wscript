@@ -12,7 +12,9 @@ def build(bld):
   obj.target = "gmsec"
 
   obj.includes = ["/usr/local/include/node",
-                  "../include"]
+                  "../include",
+                  "../include/gmsec",
+                  "../include/gmsec/util"]
 
   obj.lib      = ["GMSECAPI"]
 

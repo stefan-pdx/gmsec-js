@@ -5,6 +5,7 @@
 #include "v8.h"
 #include "node.h"
 #include "gmsec_cpp.h"
+#include "Log.h"
 
 using namespace std;
 using namespace node;
@@ -32,13 +33,25 @@ class Connection: ObjectWrap{
 private:
 
 public:
+
+	class InfoHandler : public gmsec::util::LogHandler{
+	public:
+		virtual void CALL_TYPE OnMessage(const gmsec::util::LogEntry &entry)
+		{
+			std::cout << "On INFO Message:" << std::endl;
+			char tempBuffer[50];
+			gmsec::util::formatTime_s(entry.time, tempBuffer);
+			std::cout << "  " << tempBuffer << ":" << gmsec::util::Log::ToString(entry.level) << ":" << entry.message << endl;
+		}
+	};
+
 	class GenericPublishCallback : public gmsec::Callback{
 	public:
 		Persistent<Function> cb;
 		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-				//const char *tmp;
-				//msg->ToXML(tmp);
-				cout << "WOHOO!" << endl;
+				const char *tmp;
+				msg->ToXML(tmp);
+				cout << tmp << endl;
 			};
 	};
 
@@ -103,10 +116,11 @@ public:
 		GenericPublishCallback *gmsecCb = new GenericPublishCallback();
 		gmsecCb->cb = Persistent<Function>::New(subscribeCb);
 
+		// Extract out the subject string from the V8::String object.
 		char *subscribeStr = new char[512];
 		strcpy(subscribeStr, *String::AsciiValue(subscribeV8Str));
 
-		// Log this subscription with the given callback.
+		// Log this subscription with the callback collection.
 		connection->subscribeCallbacks.insert( make_pair(subscribeStr, gmsecCb) );
 
 		// Populate a baton to pass it to the eio library.
@@ -116,37 +130,32 @@ public:
 		baton->gmsecCb = gmsecCb;
 		baton->cb = Persistent<Function>::New(immediateCb);
 
-		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
-
+		// Submit the subscription command to the thread pool and return.
 		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
-
 		ev_ref(EV_DEFAULT_UC);
-
 		return Undefined();
 	}
 
 	static int EIO_Subscribe(eio_req *req){
 		gmsec::Status result;
 
+		// Extract out the baton and execute the subscribe command.
 		message_baton_t *baton = static_cast<message_baton_t*>(req->data);
-		//baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
-
+		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
 		return 0;
 	}
 
 	static int EIO_AfterSubscribe(eio_req *req){
 		HandleScope scope;
 
+		// Extract out the baton
 		message_baton_t *baton = static_cast<message_baton_t *>(req->data);
-
 		ev_unref(EV_DEFAULT_UC);
-
 		baton->connection->Unref();
 
+		// Execute the post-subscribe immediate callback.
 		Local<Value> argv[0];
-
 		TryCatch try_catch;
-
 		baton->cb->Call(Context::GetCurrent()->Global(), 0, argv);
 
 		if (try_catch.HasCaught()) {
@@ -158,9 +167,7 @@ public:
 		// new messages are received. That corresponding callback should be
 		// disposed properly with the Unscubscribe callback.
 		baton->cb.Dispose();
-
 		delete baton;
-
 		return 0;
 	}
 
@@ -210,9 +217,13 @@ public:
 		gmsec::Config gmsecConfig = gmsec::Config();
 		gmsecConfig.AddValue("connectiontype", "gmsec_mb");
 		gmsecConfig.AddValue("server", "127.0.0.1");
+		gmsecConfig.AddValue("loglevel", "VERBOSE");
+
+		InfoHandler *infoHandler = new InfoHandler();
+		gmsec::util::Log::RegisterHandler(logDEBUG, infoHandler);
+		gmsec::util::Log::SetReportingLevel(logDEBUG);
 
 		result = gmsec::ConnectionFactory::Create(&gmsecConfig, baton->connection->gmsecConnection);
-
 
 		if (result.GetClass() != GMSEC_STATUS_NO_ERROR){
 			cout << result.Get() << endl;
@@ -226,6 +237,9 @@ public:
 			return -1;
 		}
 
+		result = baton->connection->gmsecConnection->StartAutoDispatch();
+
+
 		return 0;
 	}
 
@@ -238,13 +252,11 @@ public:
 
 		baton->connection->Unref();
 
-		Local<Value> argv[1];
-
-		argv[0] = String::New("Hello World");
+		Local<Value> argv[0];
 
 		TryCatch try_catch;
 
-		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+		baton->cb->Call(Context::GetCurrent()->Global(), 0, argv);
 
 		if (try_catch.HasCaught()) {
 		      FatalException(try_catch);

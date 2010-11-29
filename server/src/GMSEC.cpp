@@ -38,21 +38,40 @@ public:
 	public:
 		virtual void CALL_TYPE OnMessage(const gmsec::util::LogEntry &entry)
 		{
-			std::cout << "On INFO Message:" << std::endl;
+			//std::cout << "On INFO Message:" << std::endl;
 			char tempBuffer[50];
 			gmsec::util::formatTime_s(entry.time, tempBuffer);
-			std::cout << "  " << tempBuffer << ":" << gmsec::util::Log::ToString(entry.level) << ":" << entry.message << endl;
+			//std::cout << "  " << tempBuffer << ":" << gmsec::util::Log::ToString(entry.level) << ":" << entry.message << endl;
 		}
 	};
 
-	class GenericPublishCallback : public gmsec::Callback{
+	class GenericPublishCallback : public gmsec::Callback {
 	public:
 		Persistent<Function> cb;
 		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-				const char *tmp;
-				msg->ToXML(tmp);
-				cout << tmp << endl;
-			};
+			// Since this callback is being made on another thread, we need to implement
+			// the Locker class to gain control of this thread.
+			Locker locker;
+			{
+				//HandleScope scope;
+
+				// Extract out message contents
+				const char *msgStr;
+				msg->ToXML(msgStr);
+
+				// Execute the post-subscribe immediate callback.
+				Local<Value> argv[1];
+				argv[0] = String::New(msgStr);
+
+				TryCatch try_catch;
+				cb->Call(Context::GetCurrent()->Global(), 1, argv);
+
+				if (try_catch.HasCaught()) {
+					  cout << "ERROR" << endl;
+					  FatalException(try_catch);
+				}
+			}
+		}
 	};
 
 	gmsec::Connection *gmsecConnection;
@@ -61,6 +80,7 @@ public:
 	static Persistent<FunctionTemplate> s_ct;
 
 	static void Init(Handle<Object> target){
+		cout << "Init" << endl;
 		HandleScope scope;
 
 		Local<FunctionTemplate> t = FunctionTemplate::New(New);
@@ -101,6 +121,7 @@ public:
 	  };
 
 	static Handle<Value> Subscribe(const Arguments& args){
+		cout << "Subscribe" << endl;
 		HandleScope scope;
 
 		REQ_STR_ARG(0, subscribeV8Str);
@@ -115,6 +136,8 @@ public:
 		// we can properly delete the instances of GenericPublichBallback.
 		GenericPublishCallback *gmsecCb = new GenericPublishCallback();
 		gmsecCb->cb = Persistent<Function>::New(subscribeCb);
+
+		gmsecCb->cb->SetName(String::New("Funky"));
 
 		// Extract out the subject string from the V8::String object.
 		char *subscribeStr = new char[512];
@@ -133,6 +156,7 @@ public:
 		// Submit the subscription command to the thread pool and return.
 		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
 		ev_ref(EV_DEFAULT_UC);
+
 		return Undefined();
 	}
 
@@ -146,6 +170,7 @@ public:
 	}
 
 	static int EIO_AfterSubscribe(eio_req *req){
+		cout << "Post-Subscribe" << endl;
 		HandleScope scope;
 
 		// Extract out the baton
@@ -167,7 +192,7 @@ public:
 		// new messages are received. That corresponding callback should be
 		// disposed properly with the Unscubscribe callback.
 		baton->cb.Dispose();
-		delete baton;
+		//delete baton;
 		return 0;
 	}
 

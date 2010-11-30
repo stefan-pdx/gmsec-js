@@ -1,6 +1,8 @@
 #include <iostream>
 #include <map>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #include "v8.h"
 #include "node.h"
@@ -23,25 +25,47 @@ using namespace v8;
 				  String::New("Argument " #I " must be a string")));  \
   Local<String> VAR = Local<String>::Cast(args[I]);
 
-class Message: ObjectWrap{
-
-
-};
-
 class Connection: ObjectWrap{
 
 private:
 
 public:
+	/*
+	 * Forward declarations
+	 */
+	class GenericPublishCallback;
+
+	gmsec::Connection *gmsecConnection;
+	map<const char*, GenericPublishCallback*> subscribeCallbacks;
+	static Persistent<FunctionTemplate> s_ct;
+
+	/*
+	 * Message batons used for callbacks.
+	 */
+	struct message_baton_t {
+			Connection *connection;
+			char *subject;
+			GenericPublishCallback *gmsecCb;
+	};
+
+	struct connection_baton_t {
+		Connection *connection;
+		Persistent<Function> cb;
+	};
+
+	struct message_cb_baton_t {
+		Persistent<Function> cb;
+		char *message;
+	};
 
 	class InfoHandler : public gmsec::util::LogHandler{
 	public:
 		virtual void CALL_TYPE OnMessage(const gmsec::util::LogEntry &entry)
 		{
-			//std::cout << "On INFO Message:" << std::endl;
+			std::cout << "On INFO Message:" << std::endl;
 			char tempBuffer[50];
 			gmsec::util::formatTime_s(entry.time, tempBuffer);
-			//std::cout << "  " << tempBuffer << ":" << gmsec::util::Log::ToString(entry.level) << ":" << entry.message << endl;
+			std::cout << "  " << tempBuffer << ":" << gmsec::util::Log::ToString(entry.level) << ":" << entry.message << endl;
 		}
 	};
 
@@ -49,38 +73,44 @@ public:
 	public:
 		Persistent<Function> cb;
 		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-			// Since this callback is being made on another thread, we need to implement
-			// the Locker class to gain control of this thread.
-			Locker locker;
-			{
-				//HandleScope scope;
 
-				// Extract out message contents
-				const char *msgStr;
-				msg->ToXML(msgStr);
+			// Extract out message contents
+			const char *msgStr;
 
-				// Execute the post-subscribe immediate callback.
-				Local<Value> argv[1];
-				argv[0] = String::New(msgStr);
+			msg->ToXML(msgStr);
 
-				TryCatch try_catch;
-				cb->Call(Context::GetCurrent()->Global(), 1, argv);
+			// Convert the string to a dynamically allocated one. Note that it will
+			// have to be disposed of when passed to the client.
+			char *msgStrPtr = new char[strlen(msgStr)];
+			strcpy(msgStrPtr, msgStr);
 
-				if (try_catch.HasCaught()) {
-					  cout << "ERROR" << endl;
-					  FatalException(try_catch);
-				}
-			}
+			// Create the baton to pass it into the main thread.
+			message_cb_baton_t *baton = new message_cb_baton_t();
+			baton->cb = cb;
+			baton->message = msgStrPtr;
+
+			eio_custom(EIO_OnMessage, EIO_PRI_DEFAULT, EIO_AfterOnMessage, baton);
 		}
 	};
 
-	gmsec::Connection *gmsecConnection;
-	map<const char*, GenericPublishCallback*> subscribeCallbacks;
+	static int EIO_OnMessage(eio_req *req){
+		return 0;
+	}
 
-	static Persistent<FunctionTemplate> s_ct;
+	static int EIO_AfterOnMessage(eio_req *req){
+		HandleScope scope;
+
+		message_cb_baton_t *baton = static_cast<message_cb_baton_t*>(req->data);
+		Local<Value> argv[1];
+		argv[0] = String::New(baton->message);
+
+		TryCatch try_catch;
+		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+
+		return 0;
+	}
 
 	static void Init(Handle<Object> target){
-		cout << "Init" << endl;
 		HandleScope scope;
 
 		Local<FunctionTemplate> t = FunctionTemplate::New(New);
@@ -108,25 +138,12 @@ public:
 	    return args.This();
 	}
 
-	struct message_baton_t {
-		Connection *connection;
-		char *subject;
-		GenericPublishCallback *gmsecCb;
-		Persistent<Function> cb;
-	};
-
-	struct connection_baton_t {
-		Connection *connection;
-		Persistent<Function> cb;
-	  };
-
 	static Handle<Value> Subscribe(const Arguments& args){
 		cout << "Subscribe" << endl;
 		HandleScope scope;
 
 		REQ_STR_ARG(0, subscribeV8Str);
 		REQ_FUN_ARG(1, subscribeCb);
-		REQ_FUN_ARG(2, immediateCb);
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
@@ -151,7 +168,6 @@ public:
 		baton->connection = connection;
 		baton->subject = subscribeStr;
 		baton->gmsecCb = gmsecCb;
-		baton->cb = Persistent<Function>::New(immediateCb);
 
 		// Submit the subscription command to the thread pool and return.
 		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
@@ -170,28 +186,12 @@ public:
 	}
 
 	static int EIO_AfterSubscribe(eio_req *req){
-		cout << "Post-Subscribe" << endl;
 		HandleScope scope;
 
 		// Extract out the baton
 		message_baton_t *baton = static_cast<message_baton_t *>(req->data);
 		ev_unref(EV_DEFAULT_UC);
 		baton->connection->Unref();
-
-		// Execute the post-subscribe immediate callback.
-		Local<Value> argv[0];
-		TryCatch try_catch;
-		baton->cb->Call(Context::GetCurrent()->Global(), 0, argv);
-
-		if (try_catch.HasCaught()) {
-		      FatalException(try_catch);
-		}
-
-		// Note that we are only disposing the immediate callback and not the
-		// instance of the GenericPublishCallback which will remain active as
-		// new messages are received. That corresponding callback should be
-		// disposed properly with the Unscubscribe callback.
-		baton->cb.Dispose();
 		//delete baton;
 		return 0;
 	}
@@ -244,9 +244,9 @@ public:
 		gmsecConfig.AddValue("server", "127.0.0.1");
 		gmsecConfig.AddValue("loglevel", "VERBOSE");
 
-		InfoHandler *infoHandler = new InfoHandler();
-		gmsec::util::Log::RegisterHandler(logDEBUG, infoHandler);
-		gmsec::util::Log::SetReportingLevel(logDEBUG);
+		//InfoHandler *infoHandler = new InfoHandler();
+		//gmsec::util::Log::RegisterHandler(logDEBUG, infoHandler);
+		//gmsec::util::Log::SetReportingLevel(logDEBUG);
 
 		result = gmsec::ConnectionFactory::Create(&gmsecConfig, baton->connection->gmsecConnection);
 
@@ -277,11 +277,9 @@ public:
 
 		baton->connection->Unref();
 
-		Local<Value> argv[0];
-
 		TryCatch try_catch;
 
-		baton->cb->Call(Context::GetCurrent()->Global(), 0, argv);
+		baton->cb->Call(Context::GetCurrent()->Global(), 0, NULL);
 
 		if (try_catch.HasCaught()) {
 		      FatalException(try_catch);

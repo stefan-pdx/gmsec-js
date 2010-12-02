@@ -55,7 +55,8 @@ public:
 
 	struct message_cb_baton_t {
 		Persistent<Function> cb;
-		char *message;
+		gmsec::Message *message;
+		const char *message_contents;
 	};
 
 	class InfoHandler : public gmsec::util::LogHandler{
@@ -73,27 +74,19 @@ public:
 	public:
 		Persistent<Function> cb;
 		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-
-			// Extract out message contents
-			const char *msgStr;
-
-			msg->ToXML(msgStr);
-
-			// Convert the string to a dynamically allocated one. Note that it will
-			// have to be disposed of when passed to the client.
-			char *msgStrPtr = new char[strlen(msgStr)];
-			strcpy(msgStrPtr, msgStr);
-
 			// Create the baton to pass it into the main thread.
 			message_cb_baton_t *baton = new message_cb_baton_t();
 			baton->cb = cb;
-			baton->message = msgStrPtr;
+			conn->CreateMessage(baton->message);
+			conn->CloneMessage(msg, baton->message);
 
 			eio_custom(EIO_OnMessage, EIO_PRI_DEFAULT, EIO_AfterOnMessage, baton);
 		}
 	};
 
 	static int EIO_OnMessage(eio_req *req){
+		message_cb_baton_t *baton = static_cast<message_cb_baton_t*>(req->data);
+		baton->message->ToXML(baton->message_contents);
 		return 0;
 	}
 
@@ -102,10 +95,13 @@ public:
 
 		message_cb_baton_t *baton = static_cast<message_cb_baton_t*>(req->data);
 		Local<Value> argv[1];
-		argv[0] = String::New(baton->message);
+		argv[0] = String::New(baton->message_contents);
 
 		TryCatch try_catch;
 		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+
+		delete baton->message_contents;
+		delete baton;
 
 		return 0;
 	}
@@ -139,7 +135,6 @@ public:
 	}
 
 	static Handle<Value> Subscribe(const Arguments& args){
-		cout << "Subscribe" << endl;
 		HandleScope scope;
 
 		REQ_STR_ARG(0, subscribeV8Str);
@@ -153,8 +148,6 @@ public:
 		// we can properly delete the instances of GenericPublichBallback.
 		GenericPublishCallback *gmsecCb = new GenericPublishCallback();
 		gmsecCb->cb = Persistent<Function>::New(subscribeCb);
-
-		gmsecCb->cb->SetName(String::New("Funky"));
 
 		// Extract out the subject string from the V8::String object.
 		char *subscribeStr = new char[512];

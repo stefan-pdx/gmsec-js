@@ -1,0 +1,28 @@
+<html>
+  <head>
+    <script src="http://127.0.0.1:8124/socket.io/socket.io.js"></script>
+  </head>
+  <body>
+    
+    <script>      
+      var socket = new io.Socket("127.0.0.1", {port: 8124, rememberTransport: true});
+      socket.connect();
+      
+      socket.on('message', function(msg){
+        var el = document.createElement('p');
+        el.innerHTML = 'Subject = <em>' + msg.Subject + '</em><br>' +
+                       'Message Type = <em>' + msg.Kind + '</em><br>' +
+                       'Publish Tyime = ' + msg.Fields['PUBLISH-TIME'].Value + '<br>' +
+                       'Unique ID = ' + msg.Fields['UNIQUE-ID'].Value + '<hr>';
+        document.getElementById('main').appendChild(el);
+      });
+    </script>
+
+    <div id="main"></div>
+
+    <style>
+      #main { height: 300px; overflow: auto; width: 800px; border: 1px solid #eee; font: 13px Helvetica, Arial; }
+    </style>
+    
+  </body>
+</html>

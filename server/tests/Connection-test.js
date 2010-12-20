@@ -52,7 +52,7 @@ function xmlToObject(xmlStr){
  *
  * TODO: Do validation check on data.
  */
-function ObjectToXml(msg){
+function objectToXml(msg){
 
   var doc = new libxml.Document(function(n) {
     n.node('MESSAGE', {SUBJECT: msg.Subject, KIND: msg.Kind}, function(n) {
@@ -67,9 +67,11 @@ function ObjectToXml(msg){
   docString = doc.toString();
 
   /* Remove first header line (<xml...) so that the message is compatible with GMSEC. */
-  docString = docString.split('\n').shift().join('\n')
+  docStringArr = docString.split('\n');
+  docStringArr.shift()
+  docString = docStringArr.join('')
 
-  console.log(docString)
+  return docString;
 };
 
 /*
@@ -126,7 +128,7 @@ function processReceivedMessage(msg){
   });
 
   /* Broadcast out to clients the message. */
-  socket.broadcast( {type: 'GMSEC',data: msg}, clients.unique());
+  socket.broadcast( {type: 'subscribe',data: msg}, clients.unique());
 };
 
 /*
@@ -177,14 +179,16 @@ function processSubscribeRequest(client, subject){
  * Note that since clients don't know their ID, we're going to include
  * a field for CLIENT-ID within the message structure.
  */
-function processSubscribeRequest(client, msg){
-  
+function processPublishRequest(client, msg){
   /* Add a client-id field to the message */
   msg.Fields['CLIENT-ID'] = {Value : client.sessionId,
                              Type  : 'STRING'};
-
+  
   /* Publish the message. */
-  Connection.Publish(ObjectToXml(msg));
+  var msgStr = objectToXml(msg);
+  Connection.Publish(msgStr);
+console.log('Published!')
+  
 };
 
 /* Create an interface to the database and create and instance of
@@ -223,7 +227,7 @@ socket.on('connection', function(client){
   client.on('message', function(msg){
     if (msg.type == 'subscribe')   { processSubscribeRequest(client, msg.data) }
     if (msg.type == 'unsubscribe') { processSubscribeRequest(client, msg.data) }
-    if (msg.type == 'publish')     { processSubscribeRequest(client, msg.data) }      
+    if (msg.type == 'publish')     { processPublishRequest(client, msg.data) }      
   })
 
   /* If a user disconnects, we're going to have to update the database to remove

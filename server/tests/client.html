@@ -1,14 +1,41 @@
 <html>
   <head>
+    <script src="http://cdn.jquerytools.org/1.2.5/jquery.tools.min.js"></script>
     <script src="http://127.0.0.1:8124/socket.io/socket.io.js"></script>
   </head>
   <body>
     
-    <script>      
+    <script>
+
+      $(function() {
+        $("#submit_btn").click(function() {
+          socket.send({type: 'subscribe',
+                       data: $("input#subject").val()});
+        });
+
+        $("#publish_btn").click(function() {
+          msg = {Subject: 'gmsec.test1.publish',
+                 Kind:    'PUBLISH',
+                 Fields: {'TestField' : {Value: 'DataValue',
+                                         Type : 'STRING'}}};
+          
+          socket.send({type: 'publish',
+                       data: msg});
+          alert("Message sent.");
+        });
+        
+        return false;
+      });
+ 
       var socket = new io.Socket("127.0.0.1", {port: 8124, rememberTransport: true});
       socket.connect();
-      
+
       socket.on('message', function(msg){
+        
+        // Only process subscription messages.
+        if (msg.type != 'subscribe'){ return; }
+        msg = msg.data;
+        
         var el = document.createElement('p');
         el.innerHTML = 'Subject = <em>' + msg.Subject + '</em><br>' +
                        'Message Type = <em>' + msg.Kind + '</em><br>' +
@@ -17,6 +44,22 @@
         document.getElementById('main').appendChild(el);
       });
     </script>
+
+    <div id="form">
+       <fieldset>
+         <label for="subject" id="subject_label">Subscribe</label>
+         <input type="text" name="subject" id="subject" size="30" value="" class="text-input" />
+
+    	   <br />
+         <input type="submit" name="submit" class="button" id="submit_btn" value="Send" />
+       </fieldset>
+    </div>
+
+    <div id="publish">
+       <fieldset>
+         <input type="submit" name="publish" class="button" id="publish_btn" value="Publish Data" />
+       </fieldset>
+    </div>
 
     <div id="main"></div>
 

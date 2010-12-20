@@ -8,6 +8,7 @@
 #include "node.h"
 #include "gmsec_cpp.h"
 #include "Log.h"
+#include "Mutex.h"
 
 using namespace std;
 using namespace node;
@@ -28,15 +29,16 @@ using namespace v8;
 class Connection: ObjectWrap{
 
 private:
+	//static gmsec::util::Mutex connectionMutex;
 
 public:
 	/*
 	 * Forward declarations
 	 */
-	class GenericPublishCallback;
+	class MessageReceivedCallback;
 
 	gmsec::Connection *gmsecConnection;
-	map<const char*, GenericPublishCallback*> subscribeCallbacks;
+	map<const char*, MessageReceivedCallback*> subscribeCallbacks;
 	static Persistent<FunctionTemplate> s_ct;
 
 	/*
@@ -45,7 +47,7 @@ public:
 	struct message_baton_t {
 			Connection *connection;
 			char *subject;
-			GenericPublishCallback *gmsecCb;
+			MessageReceivedCallback *gmsecCb;
 	};
 
 	struct connection_baton_t {
@@ -53,9 +55,15 @@ public:
 		Persistent<Function> cb;
 	};
 
-	struct message_cb_baton_t {
-		Persistent<Function> cb;
-		gmsec::Message *message;
+	struct message_received_cb_baton_t {
+		Connection *connection;
+		Persistent<Function> cb;\
+		gmsec::Message *copied_message;
+		const char *message_contents;
+	};
+
+	struct publish_baton_t {
+		Connection *connection;
 		const char *message_contents;
 	};
 
@@ -70,39 +78,45 @@ public:
 		}
 	};
 
-	class GenericPublishCallback : public gmsec::Callback {
+	class MessageReceivedCallback : public gmsec::Callback {
 	public:
 		Persistent<Function> cb;
 		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-			// Create the baton to pass it into the main thread.
-			message_cb_baton_t *baton = new message_cb_baton_t();
-			baton->cb = cb;
-			conn->CreateMessage(baton->message);
-			conn->CloneMessage(msg, baton->message);
+			/* Create the baton to pass it into the main thread. */
+
+			message_received_cb_baton_t *baton = new message_received_cb_baton_t();
+			baton->cb = cb;\
+
+			conn->CreateMessage(baton->copied_message);
+			conn->CloneMessage(msg, baton->copied_message);
+			//conn->DestroyMessage(msg);
 
 			eio_custom(EIO_OnMessage, EIO_PRI_DEFAULT, EIO_AfterOnMessage, baton);
 		}
 	};
 
 	static int EIO_OnMessage(eio_req *req){
-		message_cb_baton_t *baton = static_cast<message_cb_baton_t*>(req->data);
-		baton->message->ToXML(baton->message_contents);
+		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
+		baton->copied_message->ToXML(baton->message_contents);
 		return 0;
 	}
 
 	static int EIO_AfterOnMessage(eio_req *req){
 		HandleScope scope;
 
-		message_cb_baton_t *baton = static_cast<message_cb_baton_t*>(req->data);
+		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
+
+
 		Local<Value> argv[1];
 		argv[0] = String::New(baton->message_contents);
 
 		TryCatch try_catch;
 		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
 
+
+		/* TODO: Figure out how to destory baton->copied_message */
 		delete baton->message_contents;
 		delete baton;
-
 		return 0;
 	}
 
@@ -117,6 +131,7 @@ public:
 
 		NODE_SET_PROTOTYPE_METHOD(s_ct, "Connect", Connect);
 		NODE_SET_PROTOTYPE_METHOD(s_ct, "Subscribe", Subscribe);
+		NODE_SET_PROTOTYPE_METHOD(s_ct, "Publish", Publish);
 
 		target->Set(String::NewSymbol("Connection"), s_ct->GetFunction());
 	}
@@ -129,9 +144,66 @@ public:
 
 	static Handle<Value> New(const Arguments& args){
 	    HandleScope scope;
+
 	    Connection *connection = new Connection();
+
 	    connection->Wrap(args.This());
 	    return args.This();
+	}
+
+	static Handle<Value> Publish(const Arguments& args){
+		HandleScope scope;
+
+		REQ_STR_ARG(0, subscribeV8Str);
+
+		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
+
+		char *message_contents = new char[ strlen(*String::AsciiValue(subscribeV8Str)) ];
+		strcpy(message_contents, *String::AsciiValue(subscribeV8Str));
+
+		/* Populate a baton to pass it to the eio library. */
+		publish_baton_t *baton = new publish_baton_t();
+		baton->connection = connection;
+		baton->message_contents = message_contents;
+
+		/* Submit the subscription command to the thread pool and return. */
+		eio_custom(EIO_Publish, EIO_PRI_DEFAULT, EIO_AfterPublish, baton);
+		ev_ref(EV_DEFAULT_UC);
+
+		return Undefined();
+	}
+
+	static int EIO_Publish(eio_req *req){
+		gmsec::Status result;
+
+		publish_baton_t *baton = static_cast<publish_baton_t*>(req->data);
+
+		/* Load the user data into a new message. */
+		gmsec::Message *msg;
+		baton->connection->gmsecConnection->CreateMessage(msg);
+		msg->FromXML(baton->message_contents);
+
+		const char *tmp;
+		msg->GetSubject(tmp);
+		cout << tmp << endl;
+
+		baton->connection->gmsecConnection->Publish(msg);
+		baton->connection->gmsecConnection->Publish(msg);
+		baton->connection->gmsecConnection->Publish(msg);
+		baton->connection->gmsecConnection->Publish(msg);
+		baton->connection->gmsecConnection->Publish(msg);
+		//baton->connection->gmsecConnection->DestroyMessage(msg);
+
+		return 0;
+	}
+
+	static int EIO_AfterPublish(eio_req *req){
+		publish_baton_t *baton = static_cast<publish_baton_t *>(req->data);
+		ev_unref(EV_DEFAULT_UC);
+
+		baton->connection->Unref();
+		delete baton;
+		return 0;
 	}
 
 	static Handle<Value> Subscribe(const Arguments& args){
@@ -142,27 +214,28 @@ public:
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
-		// Create a new instance of the generic message callback and add it
-		// to our collection so that we can track the various callback instances.
-		// Note that we're going to refer to these when we Unsubscribe so that
-		// we can properly delete the instances of GenericPublichBallback.
-		GenericPublishCallback *gmsecCb = new GenericPublishCallback();
+		/* Create a new instance of the generic message callback and add it
+		 * to our collection so that we can track the various callback instances.
+		 * Note that we're going to refer to these when we Unsubscribe so that
+		 *  we can properly delete the instances of GenericPublichBallback.
+		 */
+		MessageReceivedCallback *gmsecCb = new MessageReceivedCallback();
 		gmsecCb->cb = Persistent<Function>::New(subscribeCb);
 
-		// Extract out the subject string from the V8::String object.
-		char *subscribeStr = new char[512];
+		/* Extract out the subject string from the V8::String object. */
+		char *subscribeStr = new char[ strlen(*String::AsciiValue(subscribeV8Str)) ];
 		strcpy(subscribeStr, *String::AsciiValue(subscribeV8Str));
 
-		// Log this subscription with the callback collection.
+		/* Log this subscription with the callback collection. */
 		connection->subscribeCallbacks.insert( make_pair(subscribeStr, gmsecCb) );
 
-		// Populate a baton to pass it to the eio library.
+		/* Populate a baton to pass it to the eio library. */
 		message_baton_t *baton = new message_baton_t();
 		baton->connection = connection;
 		baton->subject = subscribeStr;
 		baton->gmsecCb = gmsecCb;
 
-		// Submit the subscription command to the thread pool and return.
+		/* Submit the subscription command to the thread pool and return. */
 		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
 		ev_ref(EV_DEFAULT_UC);
 
@@ -172,7 +245,7 @@ public:
 	static int EIO_Subscribe(eio_req *req){
 		gmsec::Status result;
 
-		// Extract out the baton and execute the subscribe command.
+		/* Extract out the baton and execute the subscribe command. */
 		message_baton_t *baton = static_cast<message_baton_t*>(req->data);
 		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
 		return 0;
@@ -181,20 +254,19 @@ public:
 	static int EIO_AfterSubscribe(eio_req *req){
 		HandleScope scope;
 
-		// Extract out the baton
+		/* Extract out the baton */
 		message_baton_t *baton = static_cast<message_baton_t *>(req->data);
 		ev_unref(EV_DEFAULT_UC);
 		baton->connection->Unref();
-		//delete baton;
 		return 0;
 	}
 
 	static int EIO_GMSEC_Subscribe(eio_req *req){
-
+		return 0;
 	}
 
 	static int EIO_GMSEC_AfterSubscribe(eio_req *req){
-
+		return 0;
 	}
 
 	static Handle<Value> Connect(const Arguments& args){
@@ -256,8 +328,6 @@ public:
 		}
 
 		result = baton->connection->gmsecConnection->StartAutoDispatch();
-
-
 		return 0;
 	}
 

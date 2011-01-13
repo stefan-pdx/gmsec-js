@@ -29,7 +29,6 @@ using namespace v8;
 class Connection: ObjectWrap{
 
 private:
-	//static gmsec::util::Mutex connectionMutex;
 
 public:
 	/*
@@ -188,11 +187,7 @@ public:
 		cout << tmp << endl;
 
 		baton->connection->gmsecConnection->Publish(msg);
-		baton->connection->gmsecConnection->Publish(msg);
-		baton->connection->gmsecConnection->Publish(msg);
-		baton->connection->gmsecConnection->Publish(msg);
-		baton->connection->gmsecConnection->Publish(msg);
-		//baton->connection->gmsecConnection->DestroyMessage(msg);
+		baton->connection->gmsecConnection->DestroyMessage(msg);
 
 		return 0;
 	}

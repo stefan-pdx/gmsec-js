@@ -31,4 +31,4 @@ FdsDemo.maneuverPlanning = SC.Page.design
             centerY: 0
             width:   400
             height:  400 
-         dataBinding: SC.Binding.from 'FdsDemo.maneuverController.data'
+         dataBinding: SC.Binding.from 'FdsDemo.maneuverController.iterations'

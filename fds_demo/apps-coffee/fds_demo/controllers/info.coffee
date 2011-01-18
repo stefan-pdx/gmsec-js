@@ -24,7 +24,8 @@ FdsDemo.infoController = SC.Object.create
                       nowShowing: 'FdsDemo.infoController.pane.overview'
                       items: [{ title: 'Overview',     value: 'FdsDemo.infoController.pane.overview' }
                               { title: 'GMSEC'   ,     value: 'FdsDemo.infoController.pane.gmsec' }
-                              { title: 'Technologies', value: 'FdsDemo.infoController.pane.technologies' }]
+                              { title: 'Technologies', value: 'FdsDemo.infoController.pane.technologies' }
+                              { title: 'Debug',        value: 'FdsDemo.infoController.pane.debug'}]
                       itemTitleKey: 'title'
                       itemValueKey: 'value'
                    buttonView: SC.ButtonView.extend
@@ -64,5 +65,35 @@ FdsDemo.infoController = SC.Object.create
                 technologies: SC.LabelView.design
                    escapeHTML: NO
                    value: 'Info about technologies go here.'
+                debug: SC.View.design
+                   layout:
+                      left: 0
+                      right: 0
+                      top: 0
+                      bottom: 0
+                   childViews: 'notifyTest maneuverTest'.w()
+                   notifyTest: SC.ButtonView.design
+                      layout:
+                         centerX: 0
+                         centerY: -40
+                         width: 120
+                         height: 24
+                      title: 'Test notify()'
+                      target: 'FdsDemo.notifyController'
+                      action: -> FdsDemo.notifyController.notify 'The Header', "Here's the body of notify message."
+                   maneuverTest: SC.ButtonView.design
+                      layout:
+                         centerX: 0
+                         centerY: 40
+                         width: 120
+                         height: 24
+                      title: 'Test addManeuver()'
+                      action: ->
+                         idx = FdsDemo.maneuversArrayController.addManeuver 'New Maneuver'
+                         for iteration in [1..2+Math.floor(Math.random()*2)]
+                            itr = FdsDemo.maneuversArrayController.addManeuverIteration idx, 'Set'+iteration
+                            data = ([num, Math.random()] for num in [1..35+Math.floor(Math.random()*40)]) 
+                            FdsDemo.maneuversArrayController.addDataToIteration idx, itr, data
+                         FdsDemo.notifyController.notify 'Completed', 'Added maneuver'
       pane.append()
       this.set 'pane',pane

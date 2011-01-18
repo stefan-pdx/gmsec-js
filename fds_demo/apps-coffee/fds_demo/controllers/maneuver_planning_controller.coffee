@@ -12,7 +12,7 @@ FdsDemo.maneuversArrayController = SC.ArrayController.create
 		this.content[maneuverID].iterations.pushObject SC.Object.create
 			label: label
 			data: []
-		this.content[maneuverID].length-1
+		this.content[maneuverID].iterations.length-1
 
 	addDataToIteration: (maneuverID, iterationID, data) ->
 		this.content[maneuverID].iterations[iterationID].data.pushObjects data

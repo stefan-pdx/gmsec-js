@@ -4,4 +4,4 @@
 # ===========================================================================
 
 # Add initial buildfile information here
-config :all, :required => [:sproutcore, :flot], :styles => "resources/jquery.jgrowl.css"
+config :all, :required => [:sproutcore, 'sproutcore/table', :flot], :styles => "resources/jquery.jgrowl.css"

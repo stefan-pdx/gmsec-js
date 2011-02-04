@@ -3,11 +3,13 @@ FdsDemo.maneuverController = SC.ObjectController.create
 
 FdsDemo.maneuversArrayController = SC.ArrayController.create
     maneuverCount: 0
-    addManeuver: (title) ->
-        maneuverCount += 1
+    addManeuver: ->
+        this.maneuverCount += 1
         this.content.pushObject
-            title: 'Maneuver '+FdsDemo.maneuversArrayController.maneuverCount 
+            title: 'Maneuver '+this.maneuverCount 
             iterations: []
+            dataProperties: []
+        this.maneuverCount
 
     addManeuverIteration: (maneuverID, label) ->
         this.content[maneuverID-1].iterations.pushObject SC.Object.create
@@ -16,8 +18,8 @@ FdsDemo.maneuversArrayController = SC.ArrayController.create
         this.content[maneuverID-1].iterations.length-1
 
     addDataToIteration: (maneuverID, iterationID, data) ->
-        this.content[maneuverID-1].iterations[iterationID-1].data.pushObjects data
-   
+        console.log "Pushing #{maneuverID} and iteration #{iterationID}"
+        this.content[maneuverID-1].iterations[iterationID] = SC.Object.create data
     content: []
     ### epoch: 'Maneuver 1'
         iterations: [

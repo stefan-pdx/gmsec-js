@@ -1,8 +1,8 @@
 #include <iostream>
 #include <map>
 #include <string.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+
 
 #include "v8.h"
 #include "node.h"

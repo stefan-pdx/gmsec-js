@@ -3,7 +3,7 @@ var io = require('socket.io'),
     mongo = require('mongodb'),
     GMSEC = require('../src/build/default/gmsec'),
     libxml = require('libxmljs'),
-    mongoose = require('mongoose').Mongoose;
+    mongoose = require('mongoose');
 
 /* Add a unique method to the array prototype. */
 Array.prototype.unique = function() {
@@ -13,10 +13,16 @@ Array.prototype.unique = function() {
     return r;
 };
 
-/* Subscription model definition */
-mongoose.model('Subscription', {
-  properties : ['subject', 'clients'],
+/* Create an interface to the database and create and instance of
+ * our Subscription model. */
+var db = mongoose.connect('mongodb://localhost/test');
+SubscriptionSchema = new mongoose.Schema({
+  subject: String,
+  clients: [String],
 });
+mongoose.model('Subscription', SubscriptionSchema);
+
+var Subscription = db.model('Subscription');
 
 /*
  * Function to convert an XML string to and object in Javascript.
@@ -115,20 +121,18 @@ function compatibleSubjects(subject){
  */
 function processReceivedMessage(msg){
   clients = [];
-
   /* Convert message xml to object and extract compatible subject titles. */
   msg = xmlToObject(msg);
   subjects = compatibleSubjects(msg.Subject);
-
   /* Extract unique clients from db. */
-  Subscription.find({ subject : { $in : compatibleSubjects(msg.Subject) } }).all(function(subscriptions){
-    for (ind in subscriptions){
-      clients = clients.concat(subscriptions[ind].clients);
-    };
+  Subscription.find({ subject : { $in : compatibleSubjects(msg.Subject) } }, function(err, subscriptions){
+      for (var i=0; i<subscriptions.length; i++){
+        for (var j=0; j<subscriptions[i].get('clients').length; j++){
+          client = socket.clients[subscriptions[i].get('clients')[j]]
+          if(client != undefined){client.send({type:"publish", data:msg})};
+        };
+      };
   });
-
-  /* Broadcast out to clients the message. */
-  socket.broadcast( {type: 'subscribe',data: msg}, clients.unique());
 };
 
 /*
@@ -139,16 +143,14 @@ function processReceivedMessage(msg){
  * need to be forwarded the message.
  */
 function processSubscribeRequest(client, subject){
-
   /* Query the db to see if the client has already subscribed to this message. */
-  Subscription.find({ subject : { $in : compatibleSubjects(subject) } }).all(function(subscriptions){
-
+  Subscription.find({ subject : {$in : compatibleSubjects(subject)} }, function(err, subscriptions){
     /* Go through each available subscriptions to see if the user is registered for a message.
      * If the user has already subscribed to this message, then return out of this function - there's
      * no need to store multiple instances of subscriptions. The user will already be receiving messages.
      */
     for (var ind=0; ind < subscriptions.length; ind++){
-      if (subscriptions[ind].clients.indexOf(client.sessionId) >= 0){return; };
+      if (subscriptions[ind].clients.indexOf(client.sessionId) >= 0){ return; };
     };
 
     /* Query to see if this subject has been recorded in the database. If it has, then include this
@@ -163,13 +165,12 @@ function processSubscribeRequest(client, subject){
     };
 
     /* At this point, the subscription does not exist within the database. Create a new entry in the database
-     * with the current user as the sole subscriber and submit the subscription request to the GMSEC API.
-     */
+    * with the current user as the sole subscriber and submit the subscription request to the GMSEC API.
+    */
     var subscription = new Subscription();
     subscription.subject = subject;
     subscription.clients = [client.sessionId];
-    subscription.save()
-
+    subscription.save();
     Connection.Subscribe(subject, function(msg){processReceivedMessage(msg)});
   });
 };
@@ -187,21 +188,16 @@ function processPublishRequest(client, msg){
   /* Publish the message. */
   var msgStr = objectToXml(msg);
   Connection.Publish(msgStr);
-console.log('Published!')
   
 };
 
-/* Create an interface to the database and create and instance of
- * our Subscription model. */
-var db = mongoose.connect('mongodb://localhost/test');
-var Subscription = db.model('Subscription');
 
 /* We're going to need to clean out the subscriptions that existed in
  * the database previously.
  *
  * TODO: Verify pre-existing subscriptions in case of node.js restart
  */
-Subscription.find().all( function(subscriptions){
+Subscription.find({}, function(err, subscriptions){
   for (var i=0; i<subscriptions.length; i++) {
     subscriptions[i].remove();
   };
@@ -213,7 +209,7 @@ var server = http.createServer(function (req, res) {
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('Hello World\n');
 });
-server.listen(8124, '127.0.0.1')
+server.listen(8080,'172.16.1.110')
 
 /* Open up the Socket.IO listener. */
 var socket = io.listen(server); 
@@ -225,6 +221,7 @@ socket.on('connection', function(client){
    * that have two fields: type and data. This is to provide additional context in the
    * mapping of client requests to the GMSEC API. */
   client.on('message', function(msg){
+    
     if (msg.type == 'subscribe')   { processSubscribeRequest(client, msg.data) }
     if (msg.type == 'unsubscribe') { processSubscribeRequest(client, msg.data) }
     if (msg.type == 'publish')     { processPublishRequest(client, msg.data) }      
@@ -235,7 +232,7 @@ socket.on('connection', function(client){
   client.on('disconnect', function(){
     
     /* Perform a query to extract out the subscriptions for the client. */
-    Subscription.find( {clients : client.sessionId} ).all(function(subscriptions){
+    Subscription.find( {clients : client.sessionId}, function(err, subscriptions){
 
       /* Step through each subscription and remove the client from the list of
        * clients associated with the subscription. */

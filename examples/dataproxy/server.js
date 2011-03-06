@@ -1,9 +1,16 @@
 var io = require('socket.io'),
     http = require('http'),
     mongo = require('mongodb'),
-    GMSEC = require('../src/build/default/gmsec'),
+    GMSEC = require('gmsec'),
     libxml = require('libxmljs'),
     mongoose = require('mongoose');
+    log4js = require('log4js')();
+
+/* Set up logging. */
+log4js.addAppender(log4js.consoleAppender());
+log4js.addAppender(log4js.fileAppender('dataproxy.log'), 'dataproxy');
+var logger = log4js.getLogger('dataproxy');
+logger.setLevel('ERROR');
 
 /* Add a unique method to the array prototype. */
 Array.prototype.unique = function() {
@@ -32,24 +39,28 @@ var Subscription = db.model('Subscription');
  * TODO: Do validation check on data.
  */
 function xmlToObject(xmlStr){
-  
-  /* Extract out XML structure from string. */
-  var doc = libxml.parseXmlString(xmlStr);
-
-  /* Create a new object to reformat the XML structure. */
   var msg = {};
-  msg['Subject'] = doc.root().attr('SUBJECT').value();
-  msg['Kind']    = doc.root().attr('KIND').value();
-  msg['Fields']  = {};
-  
-  /* Extract out the field elements */
-  for (var i=2;i<doc.root().childNodes().length;i=i+2){
-    msg['Fields'][doc.root().child(i).attr('NAME').value()] = {Value: doc.root().child(i).text(),
-                                                               Type:  doc.root().child(i).attr('TYPE').value()};
+
+  try{
+      /* Extract out XML structure from string. */
+      var doc = libxml.parseXmlString(xmlStr);
+
+      /* Create a new object to reformat the XML structure. */
+      msg['Subject'] = doc.root().attr('SUBJECT').value();
+      msg['Kind']    = doc.root().attr('KIND').value();
+      msg['Fields']  = {};
+      
+      /* Extract out the field elements */
+      for (var i=2;i<doc.root().childNodes().length;i=i+2){
+        msg['Fields'][doc.root().child(i).attr('NAME').value()] = {Value: doc.root().child(i).text(),
+                                                                   Type:  doc.root().child(i).attr('TYPE').value()};
+      };
+  } catch(err) {
+      logger.error('Unable to convert XML to object: '+xmlStr);
+      msg = null;
   };
   
   return msg;
-};
 
 /*
  * Function to convert a Javascript object to an XML string.
@@ -60,23 +71,27 @@ function xmlToObject(xmlStr){
  */
 function objectToXml(msg){
 
-  var doc = new libxml.Document(function(n) {
-    n.node('MESSAGE', {SUBJECT: msg.Subject, KIND: msg.Kind}, function(n) {
-      for (var field in msg.Fields){
-         n.node('FIELD', {NAME: field,
-                          TYPE: msg.Fields[field].Type}, msg.Fields[field].Value);
-      };
-    });
-  });
+  try{
+      var doc = new libxml.Document(function(n) {
+        n.node('MESSAGE', {SUBJECT: msg.Subject, KIND: msg.Kind}, function(n) {
+          for (var field in msg.Fields){
+             n.node('FIELD', {NAME: field,
+                              TYPE: msg.Fields[field].Type}, msg.Fields[field].Value);
+          };
+        });
+      });
 
-  /* Convert doc to string */
-  docString = doc.toString();
+      /* Convert doc to string */
+      docString = doc.toString();
 
-  /* Remove first header line (<xml...) so that the message is compatible with GMSEC. */
-  docStringArr = docString.split('\n');
-  docStringArr.shift()
-  docString = docStringArr.join('')
-
+      /* Remove first header line (<xml...) so that the message is compatible with GMSEC. */
+      docStringArr = docString.split('\n');
+      docStringArr.shift();
+      docString = docStringArr.join('');
+  } catch(err) {
+      logger.error('Unable to convert object to XML: '+JSON.stringify(msg));
+      docString = null;
+  }
   return docString;
 };
 
@@ -171,7 +186,12 @@ function processSubscribeRequest(client, subject){
     subscription.subject = subject;
     subscription.clients = [client.sessionId];
     subscription.save();
-    Connection.Subscribe(subject, function(msg){processReceivedMessage(msg)});
+
+    try{
+      Connection.Subscribe(subject, function(msg){processReceivedMessage(msg)});
+    } catch(err) {
+      logger.error('Unable to subscribe to: '+subject);
+    }
   });
 };
 
@@ -187,8 +207,16 @@ function processPublishRequest(client, msg){
   
   /* Publish the message. */
   var msgStr = objectToXml(msg);
-  Connection.Publish(msgStr);
-  
+
+  if msgStr != null{
+    try{
+      Connection.Publish(msgStr);
+    } catch(err) {
+      logger.error('Unable to pusblish: ' + JSON.stringify(msg));
+    };
+  } else {
+    logger.info('Not publishing message: ' + JSON.stringify(msg));
+  };
 };
 
 
@@ -209,7 +237,7 @@ var server = http.createServer(function (req, res) {
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('Hello World\n');
 });
-server.listen(8080,'172.16.1.110')
+server.listen(8080,'127.0.0.1')
 
 /* Open up the Socket.IO listener. */
 var socket = io.listen(server); 
@@ -217,19 +245,28 @@ var socket = io.listen(server);
 /* Process new connections from clients. */
 socket.on('connection', function(client){
 
+  logger.info('Client connected: ' + JSON.stringify(client));
+
   /* Process messages from the client. Note that we are going to be expecting objects
    * that have two fields: type and data. This is to provide additional context in the
    * mapping of client requests to the GMSEC API. */
   client.on('message', function(msg){
     
     if (msg.type == 'subscribe')   { processSubscribeRequest(client, msg.data) }
-    if (msg.type == 'unsubscribe') { processSubscribeRequest(client, msg.data) }
     if (msg.type == 'publish')     { processPublishRequest(client, msg.data) }      
+
+    /*
+     * TODO: Add unsubscribe support.
+     *
+     * if (msg.type == 'unsubscribe') { processSubscribeRequest(client, msg.data) } */
+
   })
 
   /* If a user disconnects, we're going to have to update the database to remove
    * unneeded subscriptions. */
   client.on('disconnect', function(){
+  
+    logger.info('Client disconnected: ' + JSON.stringify(client));
     
     /* Perform a query to extract out the subscriptions for the client. */
     Subscription.find( {clients : client.sessionId}, function(err, subscriptions){
@@ -248,9 +285,9 @@ socket.on('connection', function(client){
          * TODO: Implement GMSEC Unsubscribe method. */
         if (subscriptions[ind].clients.length == 0){
           /* TODO: Change to sub[ind].remove() */
-	  Subscription.remove( {_id: subscriptions[ind]._id} );
+          Subscription.remove( {_id: subscriptions[ind]._id} );
         }else{
-	  subscriptions[ind].save()
+          subscriptions[ind].save()
         }
       }
     });
@@ -258,6 +295,16 @@ socket.on('connection', function(client){
 });
 
 /* Initiate the GMSEC connection! */
-var Connection = new GMSEC.Connection();
-Connection.Connect(function(){});
+try{
+  var Connection = new GMSEC.Connection();
+} catch(err) {
+  console.error('Unable to create GMSEC connection object.');
+}
 
+try{
+  Connection.Connect(function(){
+    console.info('Connected to GMSEC message bus.');
+  });
+} catch(err) {
+  console.error('Unable to connect to GMSEC bus.');
+}

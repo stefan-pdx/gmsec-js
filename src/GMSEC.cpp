@@ -112,33 +112,29 @@ public:
 	};
 
 	static void EIO_OnMessage(uv_work_t *req){
-		if(req->queued_bytes > 0){
-			message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
-			baton->copied_message->ToXML(baton->message_contents);
-			req->data = baton;
-		}
+		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
+		baton->copied_message->ToXML(baton->message_contents);
+		req->data = baton;
 	}
 
 	static void EIO_AfterOnMessage(uv_work_t *req){
-		if(req->queued_bytes > 0){
-			HandleScope scope;
+		HandleScope scope;
 
-			message_received_cb_baton_t *baton = (message_received_cb_baton_t*)req->data;
+		message_received_cb_baton_t *baton = (message_received_cb_baton_t*)req->data;
 
-			Handle<Value> argv[1];
-			argv[0] = String::New(baton->message_contents);
+		Handle<Value> argv[1];
+		argv[0] = String::New(baton->message_contents);
 
-			TryCatch try_catch;
-			baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+		TryCatch try_catch;
+		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
 
-			baton->conn->DestroyMessage(baton->copied_message);
+		baton->conn->DestroyMessage(baton->copied_message);
 
-			delete baton;
-			delete req;
+		delete baton;
+		delete req;
 
-			if (try_catch.HasCaught())
-				FatalException(try_catch);
-		}
+		if (try_catch.HasCaught())
+			FatalException(try_catch);
 	}
 
 	static void Init(Handle<Object> target){

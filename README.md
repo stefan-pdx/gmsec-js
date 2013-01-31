@@ -3,8 +3,8 @@ Node.js Bindings for the Goddard Mission Services Evolution Center (GMSEC) API
 
 Required packages:
 
-* [GMSEC API 3.1](http://sourceforge.net/projects/gmsec/)
-* [node.js](http://nodejs.org/)
+* [GMSEC API](http://sourceforge.net/projects/gmsec/) 3.1 or newer
+* [node.js](http://nodejs.org/) 0.8.18 or newer
 
 Recommended packages:
 
@@ -25,11 +25,11 @@ Example
     
     var Connection = new GMSEC.Connection();
 
-    Connection.Connect(function(){
+    Connection.Connect("127.0.0.1", function(){
         console.log('Connected to server!')
     });
 
     Connection.Subscribe('GMSEC.TEST.SUBJECT', function(msg){
         console.log('Received message.');
-        console.log(msg.Fields["SampleField"].Value);
+		console.log(msg);
     });

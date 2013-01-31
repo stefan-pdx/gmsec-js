@@ -1,3 +1,9 @@
 fds_demo/apps
 fds_demo/tmp
 !fds_demo/apps/fds_demo/frameworks
+.suo
+.sdf
+.user
+build/Release
+build/Debug
+deps/gmsec

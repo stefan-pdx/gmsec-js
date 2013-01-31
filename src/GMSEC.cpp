@@ -40,6 +40,7 @@ using namespace v8;
 				  String::New("Argument " #I " must be a string")));  \
   Local<String> VAR = Local<String>::Cast(args[I]);
 
+static uv_async_t async;
 class Connection: ObjectWrap{
 
 private:
@@ -70,10 +71,8 @@ public:
 	};
 
 	struct message_received_cb_baton_t {
-		gmsec::Connection *conn;
 		Persistent<Function> cb;
 		gmsec::Message *copied_message;
-		const char *message_contents;
 	};
 
 	struct publish_baton_t {
@@ -95,46 +94,42 @@ public:
 	class MessageReceivedCallback : public gmsec::Callback {
 	public:
 		Persistent<Function> cb;
-		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-			
-			/* Create the baton to pass it into the main thread. */
-			message_received_cb_baton_t *baton = new message_received_cb_baton_t();
+		void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
+
+			message_received_cb_baton_t* baton = new message_received_cb_baton_t();
 			baton->cb = cb;
-			baton->conn = conn;
 
 			conn->CreateMessage(baton->copied_message);
 			conn->CloneMessage(msg, baton->copied_message);
 
-			uv_work_t *req = new uv_work_t;
+			uv_work_t* req = new uv_work_t;
 			req->data = baton;
-			uv_queue_work(uv_default_loop(), req, EIO_OnMessage, EIO_AfterOnMessage);
+
+			async.data = baton;
+			uv_async_send(&async);
 		}
 	};
 
-	static void EIO_OnMessage(uv_work_t *req){
-		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
-		baton->copied_message->ToXML(baton->message_contents);
-		req->data = baton;
-	}
+	static void test(uv_async_t *handle, int status /*UNUSED*/){
 
-	static void EIO_AfterOnMessage(uv_work_t *req){
+		message_received_cb_baton_t* baton = static_cast<message_received_cb_baton_t*>(handle->data);
 		HandleScope scope;
 
-		message_received_cb_baton_t *baton = (message_received_cb_baton_t*)req->data;
+		const char *message_contents;
+		baton->copied_message->ToXML(message_contents);
 
-		Handle<Value> argv[1];
-		argv[0] = String::New(baton->message_contents);
-
-		TryCatch try_catch;
-		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
-
-		baton->conn->DestroyMessage(baton->copied_message);
+		Local<Value> argv[1];
+		argv[0] = String::New(message_contents);
+		Local<Function> cb = Local<Function>::New(baton->cb);
 
 		delete baton;
-		delete req;
+
+		TryCatch try_catch;
+		cb->Call(Context::GetCurrent()->Global(), 1, argv);
 
 		if (try_catch.HasCaught())
 			FatalException(try_catch);
+
 	}
 
 	static void Init(Handle<Object> target){
@@ -151,6 +146,8 @@ public:
 		NODE_SET_PROTOTYPE_METHOD(s_ct, "Publish", Publish);
 
 		target->Set(String::NewSymbol("Connection"), s_ct->GetFunction());
+
+		uv_async_init(uv_default_loop(), &async, test);
 	}
 
 	Connection(){
@@ -187,7 +184,7 @@ public:
 		 req->data = baton;
 
 		/* Submit the subscription command to the thread pool and return. */
-		uv_queue_work(uv_default_loop(), req, EIO_Publish, EIO_AfterPublish);
+		uv_queue_work(uv_default_loop(), req, EIO_Publish, (uv_after_work_cb)EIO_AfterPublish);
 
 		return Undefined();
 	}
@@ -209,7 +206,7 @@ public:
 		baton->connection->gmsecConnection->DestroyMessage(msg);
 	}
 
-	static void EIO_AfterPublish(uv_work_t *req){
+	static void EIO_AfterPublish(uv_work_t* req){
 		publish_baton_t *baton = static_cast<publish_baton_t *>(req->data);
 
 		delete baton;
@@ -249,7 +246,7 @@ public:
 		 req->data = baton;
 
 		/* Submit the subscription command to the thread pool and return. */
-		uv_queue_work(uv_default_loop(), req, EIO_Subscribe, EIO_AfterSubscribe);
+		uv_queue_work(uv_default_loop(), req, EIO_Subscribe, (uv_after_work_cb)EIO_AfterSubscribe);
 
 		return Undefined();
 	}
@@ -263,7 +260,7 @@ public:
 		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
 	}
 
-	static void EIO_AfterSubscribe(uv_work_t *req){
+	static void EIO_AfterSubscribe(uv_work_t* req){
 		HandleScope scope;
 
 		/* Extract out the baton */
@@ -293,7 +290,7 @@ public:
 		uv_work_t *req = new uv_work_t;
 		req->data = baton;
 
-		uv_queue_work(uv_default_loop(), req, EIO_Connect, EIO_AfterConnect);
+		uv_queue_work(uv_default_loop(), req, EIO_Connect, (uv_after_work_cb)EIO_AfterConnect);
 
 		return Undefined();
 	}
@@ -319,7 +316,7 @@ public:
 		result = baton->connection->gmsecConnection->StartAutoDispatch();
 	}
 
-	static void EIO_AfterConnect(uv_work_t *req){
+	static void EIO_AfterConnect(uv_work_t* req){
 		
 		HandleScope scope;
 
@@ -332,8 +329,6 @@ public:
 		if (try_catch.HasCaught()) {
 		      FatalException(try_catch);
 		}
-
-		baton->cb.Dispose();
 
 		delete baton;
 		delete req;

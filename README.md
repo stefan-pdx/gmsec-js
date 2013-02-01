@@ -3,7 +3,7 @@ Node.js Bindings for the Goddard Mission Services Evolution Center (GMSEC) API
 
 Required packages:
 
-* [GMSEC API](http://sourceforge.net/projects/gmsec/) 3.1 or newer
+* [GMSEC API](http://sourceforge.net/projects/gmsec/) 3.1
 * [node.js](http://nodejs.org/) 0.8.18 or newer
 
 Optional packages (for examples):
@@ -34,23 +34,30 @@ Example
 	    });
     });
 
-Build Instructions (Windows)
+Build Instructions (Windows x86)
 -------
 
-(Note: Python needs to be installed and added to your system PATH)
+(Prereqs: Python needs to be installed and added to your system PATH)
 
 1. git clone https://github.com/jpf200124/gmsec-js.git gmsec-js
 2. git submodule update --init
-3. Download and extract Gmsec 3.1 or higher to /deps/gmsec folder. (Or download to wherever you like and change the build files)
-4. cd /deps/node.js
+3. [Download and extract Gmsec 3.1](http://sourceforge.net/projects/gmsec/files/GMSEC%20API%203.1/GMSEC_API_3.1_WinXP_VC6.tar.gz/download) to /gmsec-js/deps/gmsec folder. (Or download to wherever you like and change the build files)
+4. cd /gmsec-js/deps/node.js
 5. Run vcbuild.bat
-6. cd /build
+6. cd /gmsec-js/build
 7. Open gmsec-js.sln and build
-8. cd /build/Release or /build/Debug and copy gmsec-js.node to the /deps/node.js/Release folder.
-9. cd /deps/gmsec/bin
-10. copy all .dll files to the /deps/node.js/Release folder.
-11. Turn on the GMSEC Mbserver.
-12. Run the simple.js example in /examples/simple/ folder to test if the addon works with node and the messagebus.
+8. cd /gmsec-js/build/Release or /gmsec-js/build/Debug and copy gmsec-js.node to the /gmsec-js/deps/node.js/Release folder.
+9. cd /gmsec-js/deps/gmsec/bin
+10. copy all .dll files to the  /gmsec-js/deps/node.js/Release folder.
+11. Turn on the GMSEC Mbserver located in  /gmsec-js/deps/gmsec/MBServer.exe
+12. Run the simple.js example in /gmsec-js/examples/simple/ folder to test if the addon works with node and the messagebus.
+
+Notes:
+
+1. IF you run into build problems the result is most likely  problems with the version of the gmsec api you downloaded. 
+2. For gmsec 3.1 on windows 7 you need to use the WinXP_VC6 build. 
+3. 3.4 has builds for Win7 but they have yet to be tested. 
+4. Currently the VS solution only supports Win32.
 
 Deploy Instructions (Windows)
 ------

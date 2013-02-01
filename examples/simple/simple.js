@@ -1,5 +1,5 @@
 var http = require('http'),
-	GMSEC = require('../../build/Release/gmsec');
+	GMSEC = require('../../deps/node.js/Release/gmsec');
 
 //Create simple http server to keep node alive.
 http.createServer(function (req, res) {

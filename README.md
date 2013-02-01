@@ -6,7 +6,7 @@ Required packages:
 * [GMSEC API](http://sourceforge.net/projects/gmsec/) 3.1 or newer
 * [node.js](http://nodejs.org/) 0.8.18 or newer
 
-Recommended packages:
+Optional packages (for examples):
 
 * [Socket.IO](http://socket.io/)
 * [MongoDB](http://www.mongodb.org/) along with the node.js bindings `npm install mongodb`
@@ -21,15 +21,41 @@ gmsec-js provides Node.js bindings to the GMSEC API in order to facilitate the d
 Example
 -------
 
-    GMSEC = require('gmsec');
+    GMSEC = require('/path/to/gmsec');	//Note: You must change to where you installed the addon.
     
     var Connection = new GMSEC.Connection();
 
     Connection.Connect("127.0.0.1", function(){
         console.log('Connected to server!')
+
+		Connection.Subscribe('GMSEC.TEST.SUBJECT', function(msg){
+        	console.log('Received message.');
+			console.log(msg);
+	    });
     });
 
-    Connection.Subscribe('GMSEC.TEST.SUBJECT', function(msg){
-        console.log('Received message.');
-		console.log(msg);
-    });
+Build Instructions (Windows)
+-------
+
+(Note: Python needs to be installed and added to your system PATH)
+
+1. git clone https://github.com/jpf200124/gmsec-js.git gmsec-js
+2. git submodule update --init
+3. Download and extract Gmsec 3.1 or higher to /deps/gmsec folder. (Or download to wherever you like and change the build files)
+4. cd /deps/node.js
+5. Run vcbuild.bat
+6. cd /build
+7. Open gmsec-js.sln and build
+8. cd /build/Release or /build/Debug and copy gmsec-js.node to the /deps/node.js/Release folder.
+9. cd /deps/gmsec/bin
+10. copy all .dll files to the /deps/node.js/Release folder.
+11. Turn on the GMSEC Mbserver.
+12. Run the simple.js example in /examples/simple/ folder to test if the addon works with node and the messagebus.
+
+Deploy Instructions (Windows)
+------
+1. Repeat steps 8 thru 10 in the build instructions but deploy to your installed node system folder. (Make sure that the version of your installed node version is 0.8.18 or above. (Otherwise node will fail to load the module)
+
+Build Instructions (Linux)
+-------
+Not yet available. Still need to create makefiles and get gmsec compiled on something other than redhat.

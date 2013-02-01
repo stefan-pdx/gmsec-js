@@ -50,7 +50,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <IncludePath>../deps/node.js/deps/uv/include;../deps/gmsec/include;../deps/node.js/deps/v8/include;../deps/node.js/src;$(IncludePath)</IncludePath>
-    <LibraryPath>../deps/gmsec/objects\Release;../deps/node.js/Release;../deps/node.js/Release\lib;$(LibraryPath)</LibraryPath>
+    <LibraryPath>../deps/gmsec/objects/Release;../deps/node.js/Release;../deps/node.js/Release/lib;$(LibraryPath)</LibraryPath>
     <TargetExt>.node</TargetExt>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">

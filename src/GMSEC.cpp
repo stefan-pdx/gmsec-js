@@ -110,7 +110,7 @@ public:
 		}
 	};
 
-	static void test(uv_async_t *handle, int status /*UNUSED*/){
+	static void OnMessageAsync(uv_async_t *handle, int status /*UNUSED*/){
 
 		message_received_cb_baton_t* baton = static_cast<message_received_cb_baton_t*>(handle->data);
 		HandleScope scope;
@@ -147,7 +147,7 @@ public:
 
 		target->Set(String::NewSymbol("Connection"), s_ct->GetFunction());
 
-		uv_async_init(uv_default_loop(), &async, test);
+		uv_async_init(uv_default_loop(), &async, OnMessageAsync);
 	}
 
 	Connection(){
@@ -306,7 +306,7 @@ public:
 		gmsecConfig.AddValue("loglevel", "VERBOSE");
 
 		result = gmsec::ConnectionFactory::Create(&gmsecConfig, baton->connection->gmsecConnection);
-
+		
 		if(result.isError() == true){
 			printf(result.Get());
 			printf(result.GetString());

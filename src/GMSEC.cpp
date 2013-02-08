@@ -172,8 +172,16 @@ public:
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
-		char *message_contents = new char[ strlen(*String::AsciiValue(subscribeV8Str)) ];
+		
+		//const char str2 = "string Literal";
+		char *message_contents = new char[ strlen(*String::AsciiValue(subscribeV8Str)) + 1 ];
 		strcpy(message_contents, *String::AsciiValue(subscribeV8Str));
+
+		//const char *x;
+		//x = malloc(strlen(str2) * sizeof(*x))
+
+
+
 
 		/* Populate a baton to pass it to the eio library. */
 		publish_baton_t *baton = new publish_baton_t();

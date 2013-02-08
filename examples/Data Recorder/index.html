@@ -1,0 +1,30 @@
+<html>
+<head>
+	<title>GMSEC Example</title>
+
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>
+	<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<h1>GMSEC Example</h1>
+
+	<input type='text' id='message'></input>
+	<input type='submit' id='sendButton'></input>
+
+	<p id='paragraph'>This is a paragraph</p> 
+</body>
+<footer>
+<script type='text/javascript'>
+	var socket = io.connect();
+
+	$('#sendButton').click(function()  {
+		socket.send($('#message').val());
+	});
+
+
+	socket.on('message', function(message) {
+		$('#paragraph').text(message.toString());
+	});
+</script>
+</footer>
+</html>

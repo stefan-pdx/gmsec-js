@@ -32,6 +32,29 @@ Example
         	console.log('Received message.');
 			console.log(msg);
 	    });
+
+		string testMessage = "<MESSAGE SUBJECT="GMSEC.FREEFLYER.PUBLISHER.SC.POSITION.UPDATE" KIND="PUBLISH">
+								<FIELD TYPE="U16" NAME="CONNECTION-ID">3</FIELD>
+								<FIELD TYPE="F64" NAME="DX">999.409</FIELD>
+								<FIELD TYPE="F64" NAME="DY">-505.047</FIELD>
+								<FIELD TYPE="F64" NAME="DZ">6983.1</FIELD>
+								<FIELD TYPE="STRING" NAME="EpochText">Apr 06 2011 00:01:00.000</FIELD>
+								<FIELD TYPE="F64" NAME="Latitude">81.0011</FIELD>
+								<FIELD TYPE="F64" NAME="Longitude">138.968</FIELD>
+								<FIELD TYPE="STRING" NAME="MW-INFO">gmsec_mb</FIELD>
+								<FIELD TYPE="STRING" NAME="NODE">AWGXMVYQ1</FIELD>
+								<FIELD TYPE="U16" NAME="PROCESS-ID">9344</FIELD>
+								<FIELD TYPE="STRING" NAME="PUBLISH-TIME">2013-038-17:46:17.243</FIELD>
+								<FIELD TYPE="STRING" NAME="SCName">Aqua</FIELD>
+								<FIELD TYPE="STRING" NAME="SimulationName"></FIELD>
+								<FIELD TYPE="STRING" NAME="UNIQUE-ID">GMSEC_AWGXMVYQ1_9344_3_2</FIELD>
+								<FIELD TYPE="STRING" NAME="USER-NAME"></FIELD>
+								<FIELD TYPE="F64" NAME="X">999.409</FIELD>
+								<FIELD TYPE="F64" NAME="Y">-505.047</FIELD>
+								<FIELD TYPE="F64" NAME="Z">6983.1</FIELD>
+							</MESSAGE>";
+
+		Connection.Publish(testMessage);
     });
 
 Build Instructions (Windows x86)

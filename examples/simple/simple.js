@@ -17,4 +17,23 @@ Connection.Connect("127.0.0.1", function(){
         console.log('Received message.');
         console.log(msg);
     });
+	
+	var counter = 0;
+	var msgCount = 1000;
+	var publishMessage = function(){
+		if (counter < msgCount){
+			var testMessage = "<MESSAGE SUBJECT='GMSEC.TEST.SUBJECT' KIND='PUBLISH'>" +
+									'<FIELD TYPE="STRING" NAME="SUBJECTLINE">Message #'+ counter +'</FIELD>' +
+								'</MESSAGE>';
+
+			Connection.Publish(testMessage);
+		
+			counter++;
+			setTimeout(publishMessage, 100);
+			
+			console.log("Published Message #" + counter);
+		}
+	};
+	
+	publishMessage();
 });

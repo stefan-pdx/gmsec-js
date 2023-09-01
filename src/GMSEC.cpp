@@ -16,14 +16,13 @@
 #include <iostream>
 #include <map>
 #include <string.h>
-#include <unistd.h>
 
 
 #include "v8.h"
 #include "node.h"
 #include "gmsec_cpp.h"
-#include "Log.h"
-#include "Mutex.h"
+#include "gmsec\util\Log.h"
+#include "gmsec\util\Mutex.h"
 
 using namespace std;
 using namespace node;
@@ -41,6 +40,7 @@ using namespace v8;
 				  String::New("Argument " #I " must be a string")));  \
   Local<String> VAR = Local<String>::Cast(args[I]);
 
+static uv_async_t async;
 class Connection: ObjectWrap{
 
 private:
@@ -67,13 +67,12 @@ public:
 	struct connection_baton_t {
 		Connection *connection;
 		Persistent<Function> cb;
+		const char *server;
 	};
 
 	struct message_received_cb_baton_t {
-		Connection *connection;
-		Persistent<Function> cb;\
+		Persistent<Function> cb;
 		gmsec::Message *copied_message;
-		const char *message_contents;
 	};
 
 	struct publish_baton_t {
@@ -95,43 +94,42 @@ public:
 	class MessageReceivedCallback : public gmsec::Callback {
 	public:
 		Persistent<Function> cb;
-		virtual void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
-			/* Create the baton to pass it into the main thread. */
+		void CALL_TYPE OnMessage(gmsec::Connection *conn, gmsec::Message *msg){
 
-			message_received_cb_baton_t *baton = new message_received_cb_baton_t();
-			baton->cb = cb;\
+			message_received_cb_baton_t* baton = new message_received_cb_baton_t();
+			baton->cb = cb;
 
 			conn->CreateMessage(baton->copied_message);
 			conn->CloneMessage(msg, baton->copied_message);
-			//conn->DestroyMessage(msg);
 
-			eio_custom(EIO_OnMessage, EIO_PRI_DEFAULT, EIO_AfterOnMessage, baton);
+			uv_work_t* req = new uv_work_t;
+			req->data = baton;
+
+			async.data = baton;
+			uv_async_send(&async);
 		}
 	};
 
-	static int EIO_OnMessage(eio_req *req){
-		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
-		baton->copied_message->ToXML(baton->message_contents);
-		return 0;
-	}
+	static void OnMessageAsync(uv_async_t *handle, int status /*UNUSED*/){
 
-	static int EIO_AfterOnMessage(eio_req *req){
+		message_received_cb_baton_t* baton = static_cast<message_received_cb_baton_t*>(handle->data);
 		HandleScope scope;
 
-		message_received_cb_baton_t *baton = static_cast<message_received_cb_baton_t*>(req->data);
-
+		const char *message_contents;
+		baton->copied_message->ToXML(message_contents);
 
 		Local<Value> argv[1];
-		argv[0] = String::New(baton->message_contents);
+		argv[0] = String::New(message_contents);
+		Local<Function> cb = Local<Function>::New(baton->cb);
+
+		delete baton;
 
 		TryCatch try_catch;
-		baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+		cb->Call(Context::GetCurrent()->Global(), 1, argv);
 
+		if (try_catch.HasCaught())
+			FatalException(try_catch);
 
-		/* TODO: Figure out how to destory baton->copied_message */
-		delete baton->message_contents;
-		delete baton;
-		return 0;
 	}
 
 	static void Init(Handle<Object> target){
@@ -148,6 +146,8 @@ public:
 		NODE_SET_PROTOTYPE_METHOD(s_ct, "Publish", Publish);
 
 		target->Set(String::NewSymbol("Connection"), s_ct->GetFunction());
+
+		uv_async_init(uv_default_loop(), &async, OnMessageAsync);
 	}
 
 	Connection(){
@@ -172,22 +172,32 @@ public:
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
-		char *message_contents = new char[ strlen(*String::AsciiValue(subscribeV8Str)) ];
+		
+		//const char str2 = "string Literal";
+		char *message_contents = new char[ strlen(*String::AsciiValue(subscribeV8Str)) + 1 ];
 		strcpy(message_contents, *String::AsciiValue(subscribeV8Str));
+
+		//const char *x;
+		//x = malloc(strlen(str2) * sizeof(*x))
+
+
+
 
 		/* Populate a baton to pass it to the eio library. */
 		publish_baton_t *baton = new publish_baton_t();
 		baton->connection = connection;
 		baton->message_contents = message_contents;
 
+		 uv_work_t *req = new uv_work_t;
+		 req->data = baton;
+
 		/* Submit the subscription command to the thread pool and return. */
-		eio_custom(EIO_Publish, EIO_PRI_DEFAULT, EIO_AfterPublish, baton);
-		ev_ref(EV_DEFAULT_UC);
+		uv_queue_work(uv_default_loop(), req, EIO_Publish, (uv_after_work_cb)EIO_AfterPublish);
 
 		return Undefined();
 	}
 
-	static int EIO_Publish(eio_req *req){
+	static void EIO_Publish(uv_work_t *req){
 		gmsec::Status result;
 
 		publish_baton_t *baton = static_cast<publish_baton_t*>(req->data);
@@ -199,21 +209,16 @@ public:
 
 		const char *tmp;
 		msg->GetSubject(tmp);
-		cout << tmp << endl;
 
 		baton->connection->gmsecConnection->Publish(msg);
 		baton->connection->gmsecConnection->DestroyMessage(msg);
-
-		return 0;
 	}
 
-	static int EIO_AfterPublish(eio_req *req){
+	static void EIO_AfterPublish(uv_work_t* req){
 		publish_baton_t *baton = static_cast<publish_baton_t *>(req->data);
-		ev_unref(EV_DEFAULT_UC);
 
-		baton->connection->Unref();
 		delete baton;
-		return 0;
+		delete req;
 	}
 
 	static Handle<Value> Subscribe(const Arguments& args){
@@ -245,110 +250,85 @@ public:
 		baton->subject = subscribeStr;
 		baton->gmsecCb = gmsecCb;
 
+		 uv_work_t *req = new uv_work_t;
+		 req->data = baton;
+
 		/* Submit the subscription command to the thread pool and return. */
-		eio_custom(EIO_Subscribe, EIO_PRI_DEFAULT, EIO_AfterSubscribe, baton);
-		ev_ref(EV_DEFAULT_UC);
+		uv_queue_work(uv_default_loop(), req, EIO_Subscribe, (uv_after_work_cb)EIO_AfterSubscribe);
 
 		return Undefined();
 	}
 
-	static int EIO_Subscribe(eio_req *req){
+	static void EIO_Subscribe(uv_work_t *req){
 		gmsec::Status result;
 
 		/* Extract out the baton and execute the subscribe command. */
 		message_baton_t *baton = static_cast<message_baton_t*>(req->data);
+
 		baton->connection->gmsecConnection->Subscribe(baton->subject, baton->gmsecCb);
-		return 0;
 	}
 
-	static int EIO_AfterSubscribe(eio_req *req){
+	static void EIO_AfterSubscribe(uv_work_t* req){
 		HandleScope scope;
 
 		/* Extract out the baton */
 		message_baton_t *baton = static_cast<message_baton_t *>(req->data);
-		ev_unref(EV_DEFAULT_UC);
-		baton->connection->Unref();
-		return 0;
-	}
 
-	static int EIO_GMSEC_Subscribe(eio_req *req){
-		return 0;
-	}
-
-	static int EIO_GMSEC_AfterSubscribe(eio_req *req){
-		return 0;
+		delete baton;
+		delete req;
 	}
 
 	static Handle<Value> Connect(const Arguments& args){
-		/*
-		 * Connect to a GMSEC server given a file location.
-		 *
-		 * Argument 1: File location
-		 * Argument 2: Post-connect callback
-		 */
-
 		HandleScope scope;
 
-		REQ_FUN_ARG(0, cb);
+		REQ_STR_ARG(0, server);
+		REQ_FUN_ARG(1, cb);
+
+		/* Extract out the server string from the V8::String object. */
+		char *serverStr = new char[ strlen(*String::AsciiValue(server)) ];
+		strcpy(serverStr, *String::AsciiValue(server));
 
 		Connection *connection = ObjectWrap::Unwrap<Connection>(args.This());
 
 		connection_baton_t *baton = new connection_baton_t();
 		baton->connection = connection;
 		baton->cb = Persistent<Function>::New(cb);
+		baton->server = serverStr;
 
-		/*
-		 * TODO: Extract out properties from Javascript object and attach to connection_baton_t
-		 * and our connection instance.
-		 */
+		uv_work_t *req = new uv_work_t;
+		req->data = baton;
 
-		eio_custom(EIO_Connect, EIO_PRI_DEFAULT, EIO_AfterConnect, baton);
-
-		ev_ref(EV_DEFAULT_UC);
+		uv_queue_work(uv_default_loop(), req, EIO_Connect, (uv_after_work_cb)EIO_AfterConnect);
 
 		return Undefined();
 	}
 
-	static int EIO_Connect(eio_req *req){
+	static void EIO_Connect(uv_work_t *req){
 		gmsec::Status result;
 
 		connection_baton_t *baton = static_cast<connection_baton_t*>(req->data);
 
 		gmsec::Config gmsecConfig = gmsec::Config();
 		gmsecConfig.AddValue("connectiontype", "gmsec_mb");
-		gmsecConfig.AddValue("server", "127.0.0.1");
+		gmsecConfig.AddValue("server", baton->server);
 		gmsecConfig.AddValue("loglevel", "VERBOSE");
 
-		//InfoHandler *infoHandler = new InfoHandler();
-		//gmsec::util::Log::RegisterHandler(logDEBUG, infoHandler);
-		//gmsec::util::Log::SetReportingLevel(logDEBUG);
-
 		result = gmsec::ConnectionFactory::Create(&gmsecConfig, baton->connection->gmsecConnection);
-
-		if (result.GetClass() != GMSEC_STATUS_NO_ERROR){
-			cout << result.Get() << endl;
-			return -1;
+		
+		if(result.isError() == true){
+			printf(result.Get());
+			printf(result.GetString());
 		}
-
+		
 		result = baton->connection->gmsecConnection->Connect();
-		if (GMSEC_STATUS_NO_ERROR != result.GetClass())
-		{
-			cout << result.Get() << endl;
-			return -1;
-		}
-
 		result = baton->connection->gmsecConnection->StartAutoDispatch();
-		return 0;
 	}
 
-	static int EIO_AfterConnect(eio_req *req){
+	static void EIO_AfterConnect(uv_work_t* req){
+		
 		HandleScope scope;
 
 		connection_baton_t *baton = static_cast<connection_baton_t *>(req->data);
-
-		ev_unref(EV_DEFAULT_UC);
-
-		baton->connection->Unref();
 
 		TryCatch try_catch;
 
@@ -358,21 +338,16 @@ public:
 		      FatalException(try_catch);
 		}
 
-		baton->cb.Dispose();
-
 		delete baton;
-
-		return 0;
+		delete req;
 	}
 };
 
 Persistent<FunctionTemplate> Connection::s_ct;
 
-extern "C" {
-  static void init (Handle<Object> target)
-  {
-	  Connection::Init(target);
-  }
-
-  NODE_MODULE(gmsec, init);
+static void init (Handle<Object> target)
+{
+	Connection::Init(target);
 }
+
+NODE_MODULE(gmsec, init);
